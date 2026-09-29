@@ -88,15 +88,20 @@ interface SyncedModel {
 	input?: string[];
 }
 
-interface ProviderConnection {
+export interface ProviderConnection {
 	provider?: string;
 	isActive?: boolean;
 	testStatus?: string;
+	providerSpecificData?: {
+		prefix?: string;
+		[key: string]: unknown;
+	};
 }
 
-interface PricingProvider {
+export interface PricingProvider {
 	id?: string;
 	alias?: string;
+	displayPrefix?: string;
 }
 
 export interface ModelPricing {
@@ -288,14 +293,18 @@ export function globMatches(value: string, pattern: string): boolean {
 }
 
 export function shouldIncludeModel(
-	model: { enabled?: boolean; id: string },
+	model: { enabled?: boolean; id: string; owned_by?: string },
 	settings: Pick<OmniSettings, "onlyShowUsableModels" | "showGlobalRoutingModels" | "includeModels" | "excludeModels">,
 	usableProviders?: ReadonlySet<string>,
 ): boolean {
 	if (!settings.showGlobalRoutingModels && isGlobalRoutingModel(model.id)) return false;
 	if (settings.onlyShowUsableModels) {
 		if (model.enabled === false) return false;
-		if (model.id.includes("/") && !isGlobalRoutingModel(model.id) && !usableProviders?.has(model.id.split("/")[0])) return false;
+		if (model.id.includes("/") && !isGlobalRoutingModel(model.id)) {
+			const prefix = model.id.split("/")[0];
+			const isUsable = usableProviders?.has(prefix) || (model.owned_by ? usableProviders?.has(model.owned_by) : false);
+			if (!isUsable) return false;
+		}
 	}
 	if (settings.includeModels.length && !settings.includeModels.some((pattern) => globMatches(model.id, pattern))) return false;
 	return !settings.excludeModels.some((pattern) => globMatches(model.id, pattern));
@@ -309,8 +318,19 @@ export function usableProviderAliases(connections: ProviderConnection[], pricing
 			.filter((provider): provider is string => Boolean(provider)),
 	);
 	const aliases = new Set(canonicals);
+	for (const connection of connections) {
+		if (connection.isActive === true && (!connection.testStatus || connection.testStatus === "active")) {
+			const prefix = connection.providerSpecificData?.prefix;
+			if (typeof prefix === "string" && prefix.trim()) {
+				aliases.add(prefix.trim());
+			}
+		}
+	}
 	for (const provider of pricing) {
-		if (provider.id && provider.alias && canonicals.has(provider.id)) aliases.add(provider.alias);
+		if (provider.id && canonicals.has(provider.id)) {
+			if (typeof provider.alias === "string" && provider.alias.trim()) aliases.add(provider.alias.trim());
+			if (typeof provider.displayPrefix === "string" && provider.displayPrefix.trim()) aliases.add(provider.displayPrefix.trim());
+		}
 	}
 	return aliases;
 }
