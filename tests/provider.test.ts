@@ -214,6 +214,63 @@ it("maps active canonical providers to pricing aliases", () => {
 	expect([...usableProviderAliases([{ provider: "openai", isActive: true }], [])]).toEqual(["openai"]);
 });
 
+it("includes custom provider prefixes from connection specific data and pricing displayPrefix", () => {
+	const aliases = usableProviderAliases(
+		[
+			{
+				provider: "openai-compatible-chat-uuid-1",
+				isActive: true,
+				testStatus: "active",
+				providerSpecificData: { prefix: "cosmoshub" },
+			},
+			{
+				provider: "openai-compatible-chat-uuid-2",
+				isActive: true,
+				testStatus: "active",
+			},
+			{
+				provider: "openai-compatible-chat-uuid-inactive",
+				isActive: false,
+				testStatus: "active",
+				providerSpecificData: { prefix: "ignored-inactive" },
+			},
+			{
+				provider: "openai-compatible-chat-uuid-failed",
+				isActive: true,
+				testStatus: "failed",
+				providerSpecificData: { prefix: "ignored-failed" },
+			},
+		],
+		[
+			{
+				id: "openai-compatible-chat-uuid-2",
+				displayPrefix: "neuralwatt",
+			},
+			{
+				id: "openai-compatible-chat-uuid-inactive",
+				displayPrefix: "ignored-pricing-inactive",
+			},
+		],
+	);
+
+	expect(aliases.has("cosmoshub")).toBe(true);
+	expect(aliases.has("neuralwatt")).toBe(true);
+	expect(aliases.has("openai-compatible-chat-uuid-1")).toBe(true);
+	expect(aliases.has("openai-compatible-chat-uuid-2")).toBe(true);
+	expect(aliases.has("ignored-inactive")).toBe(false);
+	expect(aliases.has("ignored-failed")).toBe(false);
+	expect(aliases.has("ignored-pricing-inactive")).toBe(false);
+});
+
+it("includes models matching custom provider prefix or owned_by when onlyShowUsableModels is active", () => {
+	const settings = { onlyShowUsableModels: true, showGlobalRoutingModels: true, includeModels: [], excludeModels: [] };
+	const usable = new Set(["openai", "cosmoshub"]);
+
+	expect(shouldIncludeModel({ id: "cosmoshub/qwen-3.7-max", enabled: true }, settings, usable)).toBe(true);
+	expect(shouldIncludeModel({ id: "unknown-prefix/model", owned_by: "cosmoshub", enabled: true }, settings, usable)).toBe(true);
+	expect(shouldIncludeModel({ id: "unregistered/model", enabled: true }, settings, usable)).toBe(false);
+});
+
 
 it("maps vision capabilities, limits, and pricing from the catalog", async () => {
 	fetchStub.mockImplementation(async (input) => {
@@ -293,4 +350,46 @@ it("keeps advertised models when usable-provider verification fails", async () =
 	expect(model?.omitMaxOutputTokens).toBe(true);
 	expect(model?.compat?.supportsMaxOutputTokens).toBe(false);
 	expect(model?.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, tiers: [] });
+});
+
+it("discovers models from custom providers with custom prefix when onlyShowUsableModels is true", async () => {
+	fetchStub.mockImplementation(async (input) => {
+		const url = String(input);
+		if (url.endsWith("/v1/models")) {
+			return new Response(JSON.stringify({
+				data: [
+					{ id: "cosmoshub/qwen-3.7-max", name: "Qwen 3.7 Max" },
+					{ id: "unusable/some-model", name: "Unusable" },
+				],
+			}), { status: 200 });
+		}
+		if (url.includes("/api/providers")) {
+			return new Response(JSON.stringify({
+				connections: [
+					{
+						provider: "openai-compatible-chat-uuid-1",
+						isActive: true,
+						testStatus: "active",
+						providerSpecificData: { prefix: "cosmoshub" },
+					},
+				],
+			}), { status: 200 });
+		}
+		if (url.includes("/api/pricing/models")) {
+			return new Response(JSON.stringify({}), { status: 200 });
+		}
+		if (url.includes("/api/pricing")) {
+			return new Response(JSON.stringify({}), { status: 200 });
+		}
+		return new Response("{}", { status: 200 });
+	});
+
+	const { discoverModels } = await import("../src/provider.ts");
+	const models = await discoverModels(
+		{ serverUrl: "http://localhost:20128", apiKey: "secret", providerName: "omni" },
+		{ onlyShowUsableModels: true, showGlobalRoutingModels: false, includeModels: [], excludeModels: [], syncOnStartup: true, modelCacheTtlMinutes: 60, autoSyncIntervalSeconds: 300, showGatewayTokensPerSecond: true, lastSuccessfulSyncAt: 0, onUnreachable: "none", fallbackModel: "", serverUrl: "http://localhost:20128", providerName: "omni", apiKey: "secret" },
+	);
+
+	expect(models.some((model) => model.id === "cosmoshub/qwen-3.7-max")).toBe(true);
+	expect(models.some((model) => model.id === "unusable/some-model")).toBe(false);
 });
