@@ -426,7 +426,7 @@ With `onlyShowUsableModels: true`, confirm in OmniRoute that the provider connec
 
 - Is active.
 - Has no failed test status.
-- Has an alias mapping in `/api/pricing/models` when its catalog prefix differs from its canonical provider name.
+- Uses its configured custom provider prefix (`providerSpecificData.prefix`), `displayPrefix`, or has an alias mapping in `/api/pricing/models` when its catalog prefix differs from its canonical provider name.
 
 If the key cannot access `/api/providers` or `/api/pricing/models`, the extension fails open and shows the advertised catalog instead of hiding every namespaced model. Pricing will be zero until a later successful sync.
 
