@@ -161,6 +161,7 @@ Default settings:
 | `lastSuccessfulSyncAt` | number | `0` | Unix timestamp in milliseconds maintained automatically after successful syncs. `0` means no successful sync has been recorded. |
 | `onUnreachable` | `"none"` \| `"host-fallback"` | `none` | When `host-fallback`, probe the configured `serverUrl` before send and hop to `fallbackModel` if the gateway is down or times out. Configure it in `/omni config`. |
 | `fallbackModel` | string | empty | Authenticated host `provider/id` for the on-unreachable hop, for example `anthropic/claude-sonnet-4`. Empty means notify only. Configure it in `/omni config`. |
+| `defaultModel` | string | empty | Model id written to Pi's own `settings.json` as `defaultModel` (with `defaultProvider` set to `providerName`). Empty leaves Pi's startup model untouched. Configure it in `/omni config`. |
 | `apiKey` | string | empty | Bearer token sent to OmniRoute. Stored only in the protected extension settings file. |
 
 
@@ -288,6 +289,36 @@ Each synchronization maps OmniRoute `/v1/models` metadata onto the host model ca
 Audio, video, and PDF remain gateway capabilities because Pi and OMP only accept `text` and `image` as stored input kinds. Vision-capable models are advertised as accepting `image` input.
 
 Pi uses the Responses API by default. The OMP adapter uses OpenAI Chat Completions and preserves the same normal `/model <model-id>` workflow.
+
+## Context and Output Limits
+
+The extension reads the shared `~/.pi/agent/extensions/context-cap.json` file used by `pi-context-cap`, so both work from one config:
+
+```json
+{
+  "cap": 304768,
+  "appliesOver": 240000,
+  "maxTokens": 32768,
+  "reserveTokens": 32768,
+  "matchPatterns": ["*"]
+}
+```
+
+- `cap` sets the total reported `contextWindow` for matching models whose catalog window exceeds `appliesOver` (default `200000`). With `cap: 304768` and `maxTokens: 32768`, usable input is `272000` tokens even if the catalog reports a smaller stale window.
+- `maxTokens` is an explicit output-token limit for matching models. When omitted, the catalog `max_output_tokens`/`max_tokens` value is used.
+- `matchPatterns` must match the model id for the global `cap`/`maxTokens` values to apply. `["*"]` matches every model.
+- `models` holds per-model overrides: a number caps `contextWindow`; an object sets exact `contextWindow` and/or `maxTokens`.
+- `reserveTokens` stays in `context-cap.json` for compaction-aware consumers such as `pi-context-cap` or `pi-cliproxyapi-provider`. This extension never writes Pi's own `settings.json`; configure Pi's `compaction.reserveTokens` there if you want it changed.
+
+The cap is applied on every sync and again whenever the extension registers models at startup, so an edited `context-cap.json` takes effect on the next Pi start even when the model cache is still fresh. Both the registered provider and `<agent-dir>/models.json` (which Pi composes over the registered provider) carry the capped values.
+
+## Default Model
+
+Set **Default model** in `/omni config` to a synced model id such as `openai/gpt-5`. On save, the extension writes `defaultProvider` and `defaultModel` into Pi's own agent-level `settings.json`, so the next Pi start uses that model without `/model`. Leave the field empty to leave Pi's own `settings.json` untouched, so a default you set by hand is never cleared by saving the dialog; to drop an override, delete those two keys from `settings.json`.
+
+Pi matches the stored id exactly. A short value such as `glm-5.3-flash` is resolved to the single synced id that ends with it (`opencode-go/glm-5.3-flash`) and the resolved id is what gets saved. A value that is unknown, or that matches more than one synced model, shows a warning listing the candidates instead of failing silently, because Pi falls back to automatic selection for an id it cannot resolve.
+
+Only Pi (`~/.pi/agent/settings.json`) is written; OMP keeps its own model selection.
 
 ## Environment Overrides
 

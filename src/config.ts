@@ -28,6 +28,8 @@ export interface OmniSettings {
 	lastSuccessfulSyncAt: number;
 	onUnreachable: OnUnreachable;
 	fallbackModel: string;
+	/** Model id written to Pi's settings.json as defaultModel when set. Empty leaves Pi untouched. */
+	defaultModel: string;
 	apiKey: string;
 }
 
@@ -46,6 +48,7 @@ const DEFAULT_SETTINGS: OmniSettings = {
 	lastSuccessfulSyncAt: 0,
 	onUnreachable: "none",
 	fallbackModel: "",
+	defaultModel: "",
 	apiKey: "",
 };
 
@@ -91,6 +94,7 @@ export function sanitizeSettings(input: Partial<OmniSettings>): OmniSettings {
 			? (input.onUnreachable as OnUnreachable)
 			: DEFAULT_SETTINGS.onUnreachable,
 		fallbackModel: String(input.fallbackModel ?? "").trim(),
+		defaultModel: String(input.defaultModel ?? "").trim(),
 		apiKey: String(input.apiKey ?? ""),
 	};
 }
@@ -161,6 +165,40 @@ export function saveSettings(agentHome: string, settings: OmniSettings): void {
 
 export function saveConfig(agentHome: string, config: OmniConfig, currentSettings = loadSettings(agentHome)): void {
 	saveSettings(agentHome, sanitizeSettings({ ...currentSettings, ...config }));
+}
+
+export function piSettingsPath(agentHome: string): string {
+	return join(agentHome, "settings.json");
+}
+
+/** Read Pi's own settings file as a plain object; missing or invalid files read as empty. */
+function readPiSettings(path: string): Record<string, unknown> {
+	try {
+		const parsed = JSON.parse(readFileSync(path, "utf8"));
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+	} catch {
+		// Fall through to an empty file.
+	}
+	return {};
+}
+
+function writePiSettings(path: string, settings: Record<string, unknown>): void {
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`);
+}
+
+/**
+ * Point Pi's own startup model at the synced OmniRoute provider.
+ * An empty model leaves Pi's own `settings.json` untouched so a hand-set
+ * default is never cleared by saving the extension dialog.
+ */
+export function writePiDefaultModel(agentHome: string, providerName: string, model: string): void {
+	if (!model) return;
+	const path = piSettingsPath(agentHome);
+	const settings = readPiSettings(path);
+	settings.defaultProvider = providerName;
+	settings.defaultModel = model;
+	writePiSettings(path, settings);
 }
 
 export function isConfigured(agentHome: string): boolean {

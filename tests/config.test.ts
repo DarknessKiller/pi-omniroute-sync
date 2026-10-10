@@ -2,8 +2,36 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadConfig, loadHopSettings, loadProbeConfig, loadSettings, sanitizeConfig, sanitizeSettings, saveConfig, settingsPath, type OmniSettings } from "../src/config.ts";
+import { loadConfig, loadHopSettings, loadProbeConfig, loadSettings, piSettingsPath, sanitizeConfig, sanitizeSettings, saveConfig, settingsPath, writePiDefaultModel, type OmniSettings } from "../src/config.ts";
 
+describe("writePiDefaultModel", () => {
+	it("sets defaultProvider and defaultModel without dropping other Pi settings", () => {
+		const agentHome = mkdtempSync(join(tmpdir(), "pi-omni-pi-default-"));
+		writeFileSync(piSettingsPath(agentHome), JSON.stringify({ theme: "dark" }));
+
+		writePiDefaultModel(agentHome, "omni", "openai/gpt-5");
+
+		expect(JSON.parse(readFileSync(piSettingsPath(agentHome), "utf8"))).toEqual({
+			theme: "dark",
+			defaultProvider: "omni",
+			defaultModel: "openai/gpt-5",
+		});
+	});
+
+	it("leaves Pi's own default untouched when the model is empty", () => {
+		const agentHome = mkdtempSync(join(tmpdir(), "pi-omni-pi-default-"));
+		writeFileSync(piSettingsPath(agentHome), JSON.stringify({ theme: "dark" }));
+		writePiDefaultModel(agentHome, "omni", "openai/gpt-5");
+
+		writePiDefaultModel(agentHome, "omni", "");
+
+		expect(JSON.parse(readFileSync(piSettingsPath(agentHome), "utf8"))).toEqual({
+			theme: "dark",
+			defaultProvider: "omni",
+			defaultModel: "openai/gpt-5",
+		});
+	});
+});
 describe("sanitizeConfig", () => {
 	it("uses defaults when nothing is provided", () => {
 		expect(sanitizeConfig({})).toEqual({
@@ -69,6 +97,7 @@ describe("loadSettings", () => {
 			lastSuccessfulSyncAt: 0,
 			onUnreachable: "none",
 			fallbackModel: "",
+			defaultModel: "",
 			apiKey: "",
 		});
 	});
@@ -93,6 +122,7 @@ describe("loadSettings", () => {
 			lastSuccessfulSyncAt: 0,
 			onUnreachable: "none",
 			fallbackModel: "",
+			defaultModel: "",
 			apiKey: "",
 		});
 	});
@@ -121,6 +151,7 @@ describe("saveConfig", () => {
 			lastSuccessfulSyncAt: 0,
 			onUnreachable: "none",
 			fallbackModel: "",
+			defaultModel: "",
 			apiKey: "secret",
 		});
 		expect(statSync(dirname(path)).mode & 0o777).toBe(0o700);

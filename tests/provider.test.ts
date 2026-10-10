@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { checkHealth, globMatches, isGlobalRoutingModel, isSyncStale, modelCost, normalizePersistedModels, probeHealth, PROVIDER_COMPAT, registerOmniProvider, reloadOmniProvider, setInferenceApi, shouldIncludeModel, transformProviderPayload, usableProviderAliases } from "../src/provider.ts";
+import { checkHealth, globMatches, isGlobalRoutingModel, isSyncStale, modelCost, normalizePersistedModels, probeHealth, PROVIDER_COMPAT, registerOmniProvider, reloadOmniProvider, resolveCatalogModelId, setInferenceApi, shouldIncludeModel, transformProviderPayload, usableProviderAliases } from "../src/provider.ts";
 
 const fetchStub = vi.spyOn(globalThis, "fetch");
 
@@ -76,6 +76,67 @@ it("reloads legacy persisted models with the active host transport", () => {
 	expect(registration.api).toBe("openai-completions");
 	expect(registration.models[0].api).toBe("openai-completions");
 	expect(registration.models[0].omitMaxOutputTokens).toBe(true);
+});
+
+it("applies the shared context cap when reloading persisted models", () => {
+	const agentHome = mkdtempSync(join(tmpdir(), "pi-omni-cap-reload-"));
+	mkdirSync(join(agentHome, "extensions"), { recursive: true });
+	writeFileSync(
+		join(agentHome, "extensions", "context-cap.json"),
+		JSON.stringify({ cap: 272_000, appliesOver: 240_000, maxTokens: 32_768, reserveTokens: 16_384, matchPatterns: ["gpt"] }),
+	);
+	writeFileSync(join(agentHome, "models.json"), JSON.stringify({
+		providers: {
+			omni: {
+				baseUrl: "http://localhost:20128/v1",
+				api: "openai-responses",
+				models: [
+					{ id: "openai/gpt-5", contextWindow: 1_000_000, maxTokens: 128_000 },
+					{ id: "anthropic/claude", contextWindow: 1_000_000, maxTokens: 128_000 },
+				],
+			},
+		},
+	}));
+	const registerProvider = vi.fn();
+
+	reloadOmniProvider({ registerProvider } as never, agentHome, { serverUrl: "http://localhost:20128", apiKey: "secret", providerName: "omni" });
+
+	const [, registration] = registerProvider.mock.calls[0];
+	expect(registration.models[0]).toMatchObject({ id: "openai/gpt-5", contextWindow: 272_000, maxTokens: 32_768 });
+	expect(registration.models[1]).toMatchObject({ id: "anthropic/claude", contextWindow: 1_000_000, maxTokens: 128_000 });
+
+	// Pi composes models.json over the registered provider, so the file must carry the cap too.
+	const persisted = JSON.parse(readFileSync(join(agentHome, "models.json"), "utf8"));
+	expect(persisted.providers.omni.models[0]).toMatchObject({ contextWindow: 272_000, maxTokens: 32_768 });
+	// reserveTokens stays in context-cap.json; Pi's own settings.json is never written.
+	expect(existsSync(join(agentHome, "settings.json"))).toBe(false);
+});
+
+it("resolves typed default model ids against the synced catalog", () => {
+	const agentHome = mkdtempSync(join(tmpdir(), "pi-omni-resolve-"));
+	writeFileSync(join(agentHome, "models.json"), JSON.stringify({
+		providers: {
+			omni: {
+				baseUrl: "http://localhost:20128/v1",
+				models: [
+					{ id: "opencode-go/glm-5.3-flash" },
+					{ id: "command-code/z-ai/glm-5.3-flash" },
+					{ id: "opencode-go/deepseek-v4.1-flash" },
+				],
+			},
+		},
+	}));
+
+	expect(resolveCatalogModelId(agentHome, "omni", "opencode-go/deepseek-v4.1-flash")).toEqual({
+		id: "opencode-go/deepseek-v4.1-flash",
+		candidates: [],
+	});
+	expect(resolveCatalogModelId(agentHome, "omni", "deepseek-v4.1-flash").id).toBe("opencode-go/deepseek-v4.1-flash");
+	expect(resolveCatalogModelId(agentHome, "omni", "glm-5.3-flash")).toEqual({
+		id: undefined,
+		candidates: ["opencode-go/glm-5.3-flash", "command-code/z-ai/glm-5.3-flash"],
+	});
+	expect(resolveCatalogModelId(agentHome, "omni", "gpt-5")).toEqual({ id: undefined, candidates: [] });
 });
 
 it("rewrites unsupported provider request fields from catalog capabilities", () => {

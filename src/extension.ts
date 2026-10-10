@@ -5,17 +5,19 @@ import {
 	loadProbeConfig,
 	loadSettings,
 	modelsJsonPath,
+	piSettingsPath,
 	resolveAgentHome,
 	sanitizeConfig,
 	saveConfig,
 	saveSettings,
 	settingsPath,
+	writePiDefaultModel,
 	type OmniConfig,
 	type OmniSettings,
 } from "./config.ts";
 import { ConfigDialog, summarizeModels, type ModelSummary } from "./config-dialog.ts";
 import type { AgentHomeOptions, OmniContext, OmniPI, ProviderModelConfig } from "./contracts.ts";
-import { AUTO_MODELS, checkModelsEndpoint, discoverModels, isSyncStale, probeHealth, registerOmniProvider, reloadOmniProvider, setInferenceApi, testChat, transformProviderPayload } from "./provider.ts";
+import { AUTO_MODELS, checkModelsEndpoint, discoverModels, isSyncStale, probeHealth, registerOmniProvider, reloadOmniProvider, resolveCatalogModelId, setInferenceApi, testChat, transformProviderPayload } from "./provider.ts";
 import { registerGatewayTelemetry } from "./gateway-telemetry.ts";
 import {
 	createUnreachableController,
@@ -116,6 +118,8 @@ async function showConfigDialog(
 				`Auto-sync interval: ${settings.autoSyncIntervalSeconds === 0 ? "off" : `${settings.autoSyncIntervalSeconds} seconds`}`,
 				`On unreachable: ${settings.onUnreachable}${settings.fallbackModel ? ` → ${settings.fallbackModel}` : ""}`,
 				`Gateway tok/s: ${settings.showGatewayTokensPerSecond ? "shown" : "hidden"}`,
+				`Default model: ${settings.defaultModel || "leave Pi unchanged"}`,
+				`Pi settings: ${piSettingsPath(agentHome)}`,
 				`API key: ${config.apiKey ? "configured" : "not configured"}`,
 			].join("\n"),
 			"info",
@@ -128,7 +132,7 @@ async function showConfigDialog(
 	const refreshSummary = async () => {
 		try {
 			const settings = loadSettings(agentHome);
-			summary = summarizeModels(await discoverModels(loadConfig(agentHome), settings, ctx.signal));
+			summary = summarizeModels(await discoverModels(loadConfig(agentHome), settings, ctx.signal, agentHome));
 			summaryError = undefined;
 		} catch (error) {
 			summary = undefined;
@@ -169,10 +173,28 @@ async function showConfigDialog(
 	const envAction = process.env.OMNIROUTE_ON_UNREACHABLE;
 	if (envAction === "none" || envAction === "host-fallback") persisted.onUnreachable = storedSettings.onUnreachable;
 	if (process.env.OMNIROUTE_FALLBACK_MODEL !== undefined) persisted.fallbackModel = storedSettings.fallbackModel;
+	// A short id such as "glm-5.3-flash" resolves to the exact synced id; Pi only matches exact ids.
+	const resolved = persisted.defaultModel
+		? resolveCatalogModelId(agentHome, persisted.providerName, persisted.defaultModel)
+		: { id: undefined, candidates: [] };
+	if (resolved.id) persisted.defaultModel = resolved.id;
 	saveConfig(agentHome, persisted, storedSettings);
+	// Pi and OMP keep separate settings files and OMP does not share these keys; only Pi is written.
+	if (options.inferenceApi !== "openai-completions") {
+		writePiDefaultModel(agentHome, persisted.providerName, persisted.defaultModel);
+	}
 	try {
 		const models = await registerOmniProvider(pi, agentHome, loadConfig(agentHome), persisted, ctx.signal);
-		ctx.ui.notify(`Settings saved; OmniRoute synced ${models.length} model(s).`, "info");
+		const typed = saved.defaultModel.trim();
+		if (typed && resolved.id && resolved.id !== typed) {
+			ctx.ui.notify(`Default model "${typed}" resolved to "${resolved.id}".`, "info");
+		} else if (typed && !resolved.id) {
+			// Pi falls back to automatic selection for an id it cannot resolve, so warn instead.
+			const hint = resolved.candidates.length > 0 ? `Candidates: ${resolved.candidates.join(", ")}.` : "Run /omni models to copy an exact id.";
+			ctx.ui.notify(`Settings saved, but "${typed}" is not in the synced catalog, so Pi ignores it. ${hint}`, "warning");
+		} else {
+			ctx.ui.notify(`Settings saved; OmniRoute synced ${models.length} model(s).`, "info");
+		}
 	} catch (error) {
 		ctx.ui.notify(`Settings saved, but sync failed: ${(error as Error).message}`, "error");
 	}
@@ -474,7 +496,7 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 				}
 				if (sub === "sync") return void (await sync(ctx));
 				if (sub === "models") {
-					const models = await discoverModels(config, loadSettings(agentHome), ctx.signal).catch((error) => {
+					const models = await discoverModels(config, loadSettings(agentHome), ctx.signal, agentHome).catch((error) => {
 						if (ctx.signal?.aborted) throw error;
 						return [];
 					});

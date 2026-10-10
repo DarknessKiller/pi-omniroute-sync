@@ -1,9 +1,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { modelsJsonPath, saveSettings, type OmniConfig, type OmniSettings } from "./config.ts";
+import { applyContextCap, reloadContextCap } from "./context-cap.ts";
 import type { OmniPI, OmniRequestModel, OmniThinking, ProviderApi, ProviderCompat, ProviderEntry, ProviderModelConfig, ProviderThinkingLevel, ProviderThinkingLevelMap } from "./contracts.ts";
 
 const DEFAULT_PROVIDER_API: ProviderApi = "openai-responses";
+/** The gateway can take ~20 s to warm /v1/models; later calls are fast. */
+const MODELS_REQUEST_TIMEOUT_MS = 60_000;
 export const PROVIDER_COMPAT: ProviderCompat = {
 	sessionAffinityFormat: "openrouter",
 	promptCacheSessionHeader: "x-session-id",
@@ -194,7 +197,7 @@ export async function checkModelsEndpoint(config: OmniConfig, signal?: AbortSign
 	try {
 		const res = await fetch(`${config.serverUrl}/v1/models`, {
 			headers: authHeaders(config),
-			signal: requestSignal(5_000, signal),
+			signal: requestSignal(MODELS_REQUEST_TIMEOUT_MS, signal),
 		});
 		return res.ok;
 	} catch (error) {
@@ -381,7 +384,7 @@ export function modelCost(pricing?: ModelPricing): ProviderModelConfig["cost"] {
 }
 
 async function fetchSyncedModels(config: OmniConfig, signal?: AbortSignal): Promise<SyncedModel[]> {
-	const data = await requestJson<{ data?: Array<OmniApiModel | string> }>(config, "/v1/models", {}, 10_000, signal);
+	const data = await requestJson<{ data?: Array<OmniApiModel | string> }>(config, "/v1/models", {}, MODELS_REQUEST_TIMEOUT_MS, signal);
 	const rawModels = Array.isArray(data.data) ? data.data : [];
 	const results: SyncedModel[] = [];
 
@@ -424,9 +427,16 @@ async function fetchSyncedModels(config: OmniConfig, signal?: AbortSignal): Prom
 		.map(({ owned_by: _ownedBy, ...model }) => model);
 }
 
-function buildModel(model: SyncedModel, pricing?: ModelPricing): ProviderModelConfig {
+/** Apply the shared context-cap config to a built or persisted model entry. */
+function capProviderModel(model: ProviderModelConfig, agentHome?: string): ProviderModelConfig {
+	if (!agentHome) return model;
+	const capped = applyContextCap(agentHome, model.id, model.contextWindow, model.maxTokens);
+	if (capped.contextWindow === model.contextWindow && capped.maxTokens === model.maxTokens) return model;
+	return { ...model, contextWindow: capped.contextWindow, maxTokens: capped.maxTokens };
+}
+
+function buildModel(model: SyncedModel, pricing?: ModelPricing, agentHome?: string): ProviderModelConfig {
 	const contextWindow = model.contextWindow ?? 128_000;
-	const maxTokens = model.maxTokens ?? contextWindow;
 	const config: ProviderModelConfig = {
 		id: model.id,
 		name: model.name,
@@ -435,7 +445,7 @@ function buildModel(model: SyncedModel, pricing?: ModelPricing): ProviderModelCo
 		input: model.input ?? ["text"],
 		cost: modelCost(pricing),
 		contextWindow,
-		maxTokens,
+		maxTokens: model.maxTokens ?? contextWindow,
 		compat: modelCompat(model.omitMaxOutputTokens),
 	};
 	if (model.omitMaxOutputTokens) config.omitMaxOutputTokens = true;
@@ -444,7 +454,7 @@ function buildModel(model: SyncedModel, pricing?: ModelPricing): ProviderModelCo
 		config.thinking = model.thinking;
 		if (providerApi() === DEFAULT_PROVIDER_API) config.thinkingLevelMap = model.thinkingLevelMap ?? thinkingLevelMap(model.thinking);
 	}
-	return config;
+	return capProviderModel(config, agentHome);
 }
 
 function buildAutoModel(id: string): ProviderModelConfig {
@@ -457,7 +467,13 @@ function buildAutoModel(id: string): ProviderModelConfig {
 	});
 }
 
-export async function discoverModels(config: OmniConfig, settings: OmniSettings, signal?: AbortSignal): Promise<ProviderModelConfig[]> {
+export async function discoverModels(
+	config: OmniConfig,
+	settings: OmniSettings,
+	signal?: AbortSignal,
+	agentHome?: string,
+): Promise<ProviderModelConfig[]> {
+	reloadContextCap();
 	const [synced, usableProviders, pricing] = await Promise.all([
 		fetchSyncedModels(config, signal),
 		settings.onlyShowUsableModels ? fetchUsableProviders(config, signal) : undefined,
@@ -476,7 +492,7 @@ export async function discoverModels(config: OmniConfig, settings: OmniSettings,
 					usableProviders,
 				),
 			)
-			.map((model) => buildModel(model, pricing[model.id] ?? pricing[model.id.split("/").at(-1) ?? model.id])),
+			.map((model) => buildModel(model, pricing[model.id] ?? pricing[model.id.split("/").at(-1) ?? model.id], agentHome)),
 	];
 }
 
@@ -497,6 +513,22 @@ function readModelsJson(agentHome: string): ModelsJson {
 	} catch {
 		return {};
 	}
+}
+
+/**
+ * Match a typed model id against the synced catalog: an exact id wins, otherwise a
+ * unique `<group>/<value>` suffix does, so "glm-5.3-flash" resolves when only one
+ * group provides it. Ambiguous and unknown values return undefined.
+ */
+export function resolveCatalogModelId(
+	agentHome: string,
+	providerName: string,
+	value: string,
+): { id?: string; candidates: string[] } {
+	const models = readModelsJson(agentHome).providers?.[providerName]?.models ?? [];
+	if (models.some((model) => model.id === value)) return { id: value, candidates: [] };
+	const candidates = models.filter((model) => model.id.endsWith(`/${value}`)).map((model) => model.id);
+	return { id: candidates.length === 1 ? candidates[0] : undefined, candidates };
 }
 
 function persistModels(agentHome: string, config: OmniConfig, models: ProviderModelConfig[]): void {
@@ -527,14 +559,14 @@ export async function registerOmniProvider(
 	settings: OmniSettings,
 	signal?: AbortSignal,
 ): Promise<ProviderModelConfig[]> {
-	const models = await discoverModels(config, settings, signal);
+	const models = await discoverModels(config, settings, signal, agentHome);
 	pi.registerProvider(config.providerName, buildProviderEntry(config, models));
 	persistModels(agentHome, config, models);
 	saveSettings(agentHome, { ...settings, lastSuccessfulSyncAt: Date.now() });
 	return models;
 }
 
-export function normalizePersistedModels(models: Array<Partial<ProviderModelConfig>>): ProviderModelConfig[] {
+export function normalizePersistedModels(models: Array<Partial<ProviderModelConfig>>, agentHome?: string): ProviderModelConfig[] {
 	return models.filter((model): model is Partial<ProviderModelConfig> & Pick<ProviderModelConfig, "id"> => Boolean(model.id)).map((model) => {
 		const contextWindow = model.contextWindow ?? 128_000;
 		const hasOutputLimit = typeof model.maxTokens === "number" && Number.isFinite(model.maxTokens) && model.maxTokens > 0;
@@ -558,7 +590,7 @@ export function normalizePersistedModels(models: Array<Partial<ProviderModelConf
 		} else if (model.thinkingLevelMap) {
 			next.thinkingLevelMap = model.thinkingLevelMap;
 		}
-		return next;
+		return capProviderModel(next, agentHome);
 	});
 }
 
@@ -572,7 +604,8 @@ export function isSyncStale(
 export function reloadOmniProvider(pi: OmniPI, agentHome: string, config: OmniConfig): void {
 	const persisted = readModelsJson(agentHome).providers?.[config.providerName];
 	if (!persisted?.baseUrl || !persisted.models) return;
-	const models = normalizePersistedModels(persisted.models);
+	reloadContextCap();
+	const models = normalizePersistedModels(persisted.models, agentHome);
 	pi.registerProvider(config.providerName, {
 		baseUrl: persisted.baseUrl,
 		apiKey: config.apiKey || "omniroute-public",
@@ -581,6 +614,8 @@ export function reloadOmniProvider(pi: OmniPI, agentHome: string, config: OmniCo
 		compat: PROVIDER_COMPAT,
 		models,
 	});
+	// Pi composes models.json over the registered provider, so persist the capped values too.
+	persistModels(agentHome, config, models);
 }
 
 interface ResponsesResult {

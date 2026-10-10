@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +14,12 @@ const providerMocks = vi.hoisted(() => ({
 	isSyncStale: vi.fn().mockReturnValue(false),
 	registerOmniProvider: vi.fn().mockResolvedValue([]),
 	reloadOmniProvider: vi.fn(),
+	resolveCatalogModelId: vi.fn((_home: string, _provider: string, value: string) => {
+		const catalog = ["opencode-go/glm-5.3-flash", "opencode-go/deepseek-v4.1-flash"];
+		if (catalog.includes(value)) return { id: value, candidates: [] };
+		const candidates = catalog.filter((id) => id.endsWith(`/${value}`));
+		return { id: candidates.length === 1 ? candidates[0] : undefined, candidates };
+	}),
 	setInferenceApi: vi.fn(),
 	testChat: vi.fn().mockResolvedValue("ok"),
 	transformProviderPayload: vi.fn((payload) => payload),
@@ -207,6 +213,133 @@ describe("autosync lifecycle", () => {
 		const callsBeforeAdvance = providerMocks.registerOmniProvider.mock.calls.length;
 		vi.advanceTimersByTime(120_000);
 		expect(providerMocks.registerOmniProvider).toHaveBeenCalledTimes(callsBeforeAdvance);
+	});
+
+	it("writes a default model chosen in the config dialog to Pi's settings", async () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-omni-extension-"));
+		saveSettings(home, baseSettings);
+		const pi = fakePi();
+		const ui = context({
+			custom: vi.fn(async (factory: any): Promise<any> => {
+				let result: OmniSettings | undefined;
+				const component = await factory(
+					{ requestRender: vi.fn() },
+					{ fg: (_color: unknown, text: string) => text, bold: (text: string) => text },
+					{},
+					(value: OmniSettings | undefined) => { result = value; },
+				);
+				component.handleInput("\t");
+				for (let index = 0; index < 9; index++) component.handleInput("j");
+				component.handleInput("\r");
+				component.handleInput("opencode-go/glm-5.3-flash");
+				component.handleInput("\r");
+				component.handleInput("\x1b");
+				return result;
+			}) as unknown as OmniContext["ui"]["custom"],
+		});
+		await createExtension(home, pi);
+
+		await pi.commands.get("omni")!.handler("config", ui);
+		expect(JSON.parse(readFileSync(settingsPath(home), "utf8"))).toMatchObject({ defaultModel: "opencode-go/glm-5.3-flash" });
+		expect(JSON.parse(readFileSync(join(home, "settings.json"), "utf8"))).toMatchObject({
+			defaultProvider: "omni",
+			defaultModel: "opencode-go/glm-5.3-flash",
+		});
+	});
+
+	it("keeps a hand-set Pi default when the dialog saves an empty default model", async () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-omni-extension-"));
+		saveSettings(home, baseSettings);
+		writeFileSync(join(home, "settings.json"), JSON.stringify({ theme: "dark", defaultProvider: "omni", defaultModel: "openai/gpt-5" }));
+		const pi = fakePi();
+		const ui = context({
+			custom: vi.fn(async (factory: any): Promise<any> => {
+				let result: OmniSettings | undefined;
+				const component = await factory(
+					{ requestRender: vi.fn() },
+					{ fg: (_color: unknown, text: string) => text, bold: (text: string) => text },
+					{},
+					(value: OmniSettings | undefined) => { result = value; },
+				);
+				component.handleInput("\t");
+				component.handleInput("\x1b");
+				return result;
+			}) as unknown as OmniContext["ui"]["custom"],
+		});
+		await createExtension(home, pi);
+
+		await pi.commands.get("omni")!.handler("config", ui);
+		expect(JSON.parse(readFileSync(join(home, "settings.json"), "utf8"))).toMatchObject({
+			theme: "dark",
+			defaultProvider: "omni",
+			defaultModel: "openai/gpt-5",
+		});
+	});
+
+	it("warns when the chosen default model is not in the synced catalog", async () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-omni-extension-"));
+		saveSettings(home, baseSettings);
+		providerMocks.registerOmniProvider.mockResolvedValue([{ id: "opencode-go/glm-5.3-flash" }]);
+		const pi = fakePi();
+		const notify = vi.fn();
+		const ui = context({
+			notify,
+			custom: vi.fn(async (factory: any): Promise<any> => {
+				let result: OmniSettings | undefined;
+				const component = await factory(
+					{ requestRender: vi.fn() },
+					{ fg: (_color: unknown, text: string) => text, bold: (text: string) => text },
+					{},
+					(value: OmniSettings | undefined) => { result = value; },
+				);
+				component.handleInput("\t");
+				for (let index = 0; index < 9; index++) component.handleInput("j");
+				component.handleInput("\r");
+				component.handleInput("not-a-real-model");
+				component.handleInput("\r");
+				component.handleInput("\x1b");
+				return result;
+			}) as unknown as OmniContext["ui"]["custom"],
+		});
+		await createExtension(home, pi);
+
+		await pi.commands.get("omni")!.handler("config", ui);
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("is not in the synced catalog"), "warning");
+	});
+
+	it("resolves a short default model id to the exact synced id", async () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-omni-extension-"));
+		saveSettings(home, baseSettings);
+		const pi = fakePi();
+		const notify = vi.fn();
+		const ui = context({
+			notify,
+			custom: vi.fn(async (factory: any): Promise<any> => {
+				let result: OmniSettings | undefined;
+				const component = await factory(
+					{ requestRender: vi.fn() },
+					{ fg: (_color: unknown, text: string) => text, bold: (text: string) => text },
+					{},
+					(value: OmniSettings | undefined) => { result = value; },
+				);
+				component.handleInput("	");
+				for (let index = 0; index < 9; index++) component.handleInput("j");
+				component.handleInput("\r");
+				component.handleInput("glm-5.3-flash");
+				component.handleInput("\r");
+				component.handleInput("\x1b");
+				return result;
+			}) as unknown as OmniContext["ui"]["custom"],
+		});
+		await createExtension(home, pi);
+
+		await pi.commands.get("omni")!.handler("config", ui);
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining('resolved to "opencode-go/glm-5.3-flash"'), "info");
+		expect(JSON.parse(readFileSync(settingsPath(home), "utf8"))).toMatchObject({ defaultModel: "opencode-go/glm-5.3-flash" });
+		expect(JSON.parse(readFileSync(join(home, "settings.json"), "utf8"))).toMatchObject({
+			defaultProvider: "omni",
+			defaultModel: "opencode-go/glm-5.3-flash",
+		});
 	});
 
 	it("turns autosync off immediately when the command sets zero", async () => {
