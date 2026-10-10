@@ -21,6 +21,7 @@ const baseSettings: OmniSettings = {
 	lastSuccessfulSyncAt: 0,
 	onUnreachable: "none",
 	fallbackModel: "",
+	defaultModel: "",
 	apiKey: "secret",
 };
 const UP = ["\x1b[A", "\x1bOA", "\x1b[57419u", "\x1b[1;1A"];
@@ -285,11 +286,26 @@ describe("inline field editing", () => {
 		expect(rendered(component)).toContain("-1");
 	});
 
+	it("edits the default model and reaches it without skipping rows", () => {
+		const done = vi.fn();
+		const component = dialog(done);
+		goConfig(component);
+		// Default model is row 9, directly after the auto-sync interval.
+		for (let index = 0; index < 9; index++) component.handleInput("j");
+		expect(selectedLine(component)).toContain("Default model");
+		component.handleInput("\r");
+		component.handleInput("opencode-go/glm-5.3-flash");
+		component.handleInput("\r");
+		expect(rendered(component)).toContain("opencode-go/glm-5.3-flash");
+		component.handleInput("\x1b");
+		expect(done).toHaveBeenCalledWith({ ...baseSettings, defaultModel: "opencode-go/glm-5.3-flash" });
+	});
+
 	it("toggles unreachable behavior in the draft", () => {
 		const done = vi.fn();
 		const component = dialog(done);
 		goConfig(component);
-		for (let index = 0; index < 9; index++) component.handleInput("j");
+		for (let index = 0; index < 10; index++) component.handleInput("j");
 		component.handleInput(" ");
 		expect(rendered(component)).toContain("host-fallback");
 		expect(rendered(component)).toContain("Unreachable behavior set to host-fallback in draft");
@@ -301,7 +317,7 @@ describe("inline field editing", () => {
 		const done = vi.fn();
 		const component = dialog(done);
 		goConfig(component);
-		for (let index = 0; index < 10; index++) component.handleInput("j");
+		for (let index = 0; index < 11; index++) component.handleInput("j");
 		component.handleInput("\r");
 		component.handleInput("anthropic/claude-sonnet-4");
 		component.handleInput("\r");
@@ -314,7 +330,7 @@ describe("inline field editing", () => {
 		const done = vi.fn();
 		const component = dialog(done);
 		goConfig(component);
-		for (let index = 0; index < 11; index++) component.handleInput("j");
+		for (let index = 0; index < 12; index++) component.handleInput("j");
 		component.handleInput(" ");
 		expect(rendered(component)).toContain("Gateway tok/s display disabled in draft");
 		component.handleInput("\x1b");
@@ -325,7 +341,7 @@ describe("inline field editing", () => {
 		const done = vi.fn();
 		const component = dialog(done);
 		goConfig(component);
-		for (let index = 0; index < 14; index++) component.handleInput("j");
+		for (let index = 0; index < 15; index++) component.handleInput("j");
 		component.handleInput(" ");
 		expect(rendered(component)).toContain("Agent tools will be registered");
 		component.handleInput("\x1b");
@@ -336,7 +352,7 @@ describe("inline field editing", () => {
 		const done = vi.fn();
 		const component = dialog(done);
 		goConfig(component);
-		for (let index = 0; index < 12; index++) component.handleInput("j");
+		for (let index = 0; index < 13; index++) component.handleInput("j");
 		component.handleInput("\r");
 		component.handleInput("new-secret");
 		expect(rendered(component)).not.toContain("new-secret");
@@ -349,7 +365,7 @@ describe("inline field editing", () => {
 		const done = vi.fn();
 		const component = dialog(done);
 		goConfig(component);
-		for (let index = 0; index < 13; index++) component.handleInput("j");
+		for (let index = 0; index < 14; index++) component.handleInput("j");
 		component.handleInput("\r");
 		expect(rendered(component)).toContain("already empty");
 		expect(done).not.toHaveBeenCalled();
