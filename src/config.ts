@@ -32,6 +32,8 @@ export interface OmniSettings {
 	fallbackModel: string;
 	/** Model id written to Pi's settings.json as defaultModel when set. Empty leaves Pi untouched. */
 	defaultModel: string;
+	/** Value sent as the x-omniroute-compression request header. Empty omits the header. */
+	compressionHeader: string;
 	apiKey: string;
 }
 
@@ -52,6 +54,7 @@ const DEFAULT_SETTINGS: OmniSettings = {
 	onUnreachable: "none",
 	fallbackModel: "",
 	defaultModel: "",
+	compressionHeader: "",
 	apiKey: "",
 };
 
@@ -99,6 +102,7 @@ export function sanitizeSettings(input: Partial<OmniSettings>): OmniSettings {
 			: DEFAULT_SETTINGS.onUnreachable,
 		fallbackModel: String(input.fallbackModel ?? "").trim(),
 		defaultModel: String(input.defaultModel ?? "").trim(),
+		compressionHeader: String(input.compressionHeader ?? "").trim(),
 		apiKey: String(input.apiKey ?? ""),
 	};
 }

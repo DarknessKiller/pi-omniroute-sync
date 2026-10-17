@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { checkHealth, globMatches, isGlobalRoutingModel, isSyncStale, modelCost, normalizePersistedModels, probeHealth, probeManagementScope, providerCompat, PROVIDER_COMPAT, registerOmniProvider, reloadOmniProvider, resolveCatalogModelId, setHost, setInferenceApi, shouldIncludeModel, transformProviderPayload, usableProviderAliases } from "../src/provider.ts";
-import { saveConfig } from "../src/config.ts";
+import { loadSettings, saveConfig, saveSettings } from "../src/config.ts";
 
 const fetchStub = vi.spyOn(globalThis, "fetch");
 
@@ -16,6 +16,7 @@ it("uses OmniRoute's supported session-affinity headers", () => {
 	expect(PROVIDER_COMPAT.sessionAffinityFormat).toBe("openrouter");
 	expect(PROVIDER_COMPAT.promptCacheSessionHeader).toBe("x-session-id");
 });
+
 
 it("emits sessionAffinityFormat only for Pi hosts", () => {
 	expect(providerCompat("pi")).toMatchObject({ sessionAffinityFormat: "openrouter", promptCacheSessionHeader: "x-session-id" });
@@ -44,6 +45,24 @@ it("persists host-appropriate compat for omp and pi", async () => {
 	persisted = JSON.parse(readFileSync(join(agentHome, "models.json"), "utf8"));
 	expect(persisted.providers.omni.compat.sessionAffinityFormat).toBe("openrouter");
 	expect(persisted.providers.omni.models[0].compat.sessionAffinityFormat).toBe("openrouter");
+});
+
+it("forwards the configured x-omniroute-compression header and omits it when unset", () => {
+	const agentHome = mkdtempSync(join(tmpdir(), "pi-omni-compression-"));
+	writeFileSync(join(agentHome, "models.json"), JSON.stringify({
+		providers: { omni: { baseUrl: "http://localhost:20128/v1", api: "openai-responses", models: [{ id: "openai/gpt-5", contextWindow: 200_000 }] } },
+	}));
+	const registerProvider = vi.fn();
+	const config = { serverUrl: "http://localhost:20128", apiKey: "secret", providerName: "omni" };
+
+	saveSettings(agentHome, { ...loadSettings(agentHome), compressionHeader: "allow-lossy" });
+	reloadOmniProvider({ registerProvider } as never, agentHome, config);
+	expect(registerProvider.mock.calls[0][1].headers).toEqual({ "x-omniroute-compression": "allow-lossy" });
+
+	registerProvider.mockReset();
+	saveSettings(agentHome, { ...loadSettings(agentHome), compressionHeader: "" });
+	reloadOmniProvider({ registerProvider } as never, agentHome, config);
+	expect(registerProvider.mock.calls[0][1].headers).toEqual({});
 });
 
 it("checks OmniRoute's lightweight health endpoint", async () => {

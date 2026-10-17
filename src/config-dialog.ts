@@ -4,7 +4,7 @@ import { AUTO_MODELS } from "./provider.ts";
 
 export type KeyMatcher = (data: string, key: string) => boolean;
 export type ConfigDialogTab = "summary" | "config";
-type EditingField = "serverUrl" | "includeModels" | "excludeModels" | "modelCacheTtlMinutes" | "autoSyncIntervalSeconds" | "fallbackModel" | "defaultModel" | "apiKey";
+type EditingField = "serverUrl" | "includeModels" | "excludeModels" | "modelCacheTtlMinutes" | "autoSyncIntervalSeconds" | "fallbackModel" | "defaultModel" | "compressionHeader" | "apiKey";
 
 export interface ModelSummary {
 	total: number;
@@ -179,6 +179,8 @@ export class ConfigDialog implements OmniComponent {
 			this.draft.defaultModel = value.trim();
 		} else if (this.editing === "fallbackModel") {
 			this.draft.fallbackModel = value.trim();
+		} else if (this.editing === "compressionHeader") {
+			this.draft.compressionHeader = value.trim();
 		} else {
 			this.draft[this.editing as "serverUrl" | "apiKey"] = value;
 		}
@@ -215,6 +217,7 @@ export class ConfigDialog implements OmniComponent {
 		if (this.selected === 9) return this.startEditing("defaultModel", this.draft.defaultModel);
 		if (this.selected === 11) return this.startEditing("fallbackModel", this.draft.fallbackModel);
 		if (this.selected === 13) return this.startEditing("apiKey", "");
+		if (this.selected === 15) return this.startEditing("compressionHeader", this.draft.compressionHeader);
 		if (this.selected === 14) {
 			this.draft.apiKey = "";
 			this.status = "API key cleared in draft. Escape saves and closes.";
@@ -369,6 +372,7 @@ export class ConfigDialog implements OmniComponent {
 			"Show or hide gateway-reported tok/s after OmniRoute turns.",
 			"Replace the API key in a masked inline editor.",
 			"Clear the API key in the draft.",
+			"Value for the x-omniroute-compression request header; empty keeps the OmniRoute default.",
 		][this.selected] ?? "";
 	}
 

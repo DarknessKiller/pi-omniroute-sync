@@ -123,6 +123,7 @@ async function showConfigDialog(
 				`On unreachable: ${settings.onUnreachable}${settings.fallbackModel ? ` → ${settings.fallbackModel}` : ""}`,
 				`Gateway tok/s: ${settings.showGatewayTokensPerSecond ? "shown" : "hidden"}`,
 				`Default model: ${settings.defaultModel || "leave Pi unchanged"}`,
+				`Compression header: ${settings.compressionHeader || "server default"}`,
 				`Pi settings: ${piSettingsPath(agentHome)}`,
 				`API key: ${config.apiKey ? "configured" : "not configured"}`,
 			].join("\n"),
