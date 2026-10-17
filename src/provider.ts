@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { modelsJsonPath, saveSettings, type OmniConfig, type OmniSettings } from "./config.ts";
+import { loadSettings, modelsJsonPath, saveSettings, type OmniConfig, type OmniSettings } from "./config.ts";
 import { applyContextCap, reloadContextCap } from "./context-cap.ts";
 import type { OmniPI, OmniRequestModel, OmniThinking, ProviderApi, ProviderCompat, ProviderEntry, ProviderModelConfig, ProviderThinkingLevel, ProviderThinkingLevelMap } from "./contracts.ts";
 
@@ -122,6 +122,11 @@ interface ModelsJson {
 
 function authHeaders(config: OmniConfig): Record<string, string> {
 	return config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {};
+}
+
+/** OmniRoute per-request compression override. Empty keeps the server default. */
+function compressionHeaders(value: string): Record<string, string> {
+	return value ? { "x-omniroute-compression": value } : {};
 }
 
 function requestSignal(timeoutMs: number, signal?: AbortSignal | null): AbortSignal {
@@ -496,13 +501,14 @@ export async function discoverModels(
 	];
 }
 
-function buildProviderEntry(config: OmniConfig, models: ProviderModelConfig[]): ProviderEntry {
+function buildProviderEntry(config: OmniConfig, models: ProviderModelConfig[], compressionHeader = ""): ProviderEntry {
 	return {
 		baseUrl: `${config.serverUrl}/v1`,
 		apiKey: config.apiKey || "omniroute-public",
 		api: providerApi(),
 		authHeader: true,
 		compat: PROVIDER_COMPAT,
+		headers: compressionHeaders(compressionHeader),
 		models,
 	};
 }
@@ -560,7 +566,7 @@ export async function registerOmniProvider(
 	signal?: AbortSignal,
 ): Promise<ProviderModelConfig[]> {
 	const models = await discoverModels(config, settings, signal, agentHome);
-	pi.registerProvider(config.providerName, buildProviderEntry(config, models));
+	pi.registerProvider(config.providerName, buildProviderEntry(config, models, settings.compressionHeader));
 	persistModels(agentHome, config, models);
 	saveSettings(agentHome, { ...settings, lastSuccessfulSyncAt: Date.now() });
 	return models;
@@ -605,6 +611,7 @@ export function reloadOmniProvider(pi: OmniPI, agentHome: string, config: OmniCo
 	const persisted = readModelsJson(agentHome).providers?.[config.providerName];
 	if (!persisted?.baseUrl || !persisted.models) return;
 	reloadContextCap();
+	const compressionHeader = loadSettings(agentHome).compressionHeader;
 	const models = normalizePersistedModels(persisted.models, agentHome);
 	pi.registerProvider(config.providerName, {
 		baseUrl: persisted.baseUrl,
@@ -612,6 +619,7 @@ export function reloadOmniProvider(pi: OmniPI, agentHome: string, config: OmniCo
 		api: providerApi(),
 		authHeader: true,
 		compat: PROVIDER_COMPAT,
+		headers: compressionHeaders(compressionHeader),
 		models,
 	});
 	// Pi composes models.json over the registered provider, so persist the capped values too.

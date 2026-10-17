@@ -21,6 +21,7 @@ const baseSettings: OmniSettings = {
 	onUnreachable: "none",
 	fallbackModel: "",
 	defaultModel: "",
+	compressionHeader: "",
 	apiKey: "secret",
 };
 const UP = ["\x1b[A", "\x1bOA", "\x1b[57419u", "\x1b[1;1A"];
@@ -357,6 +358,19 @@ describe("inline field editing", () => {
 		component.handleInput("\r");
 		expect(rendered(component)).toContain("already empty");
 		expect(done).not.toHaveBeenCalled();
+	});
+
+	it("edits the compression header and saves it in the draft", () => {
+		const done = vi.fn();
+		const component = dialog(done);
+		goConfig(component);
+		for (let index = 0; index < 15; index++) component.handleInput("j");
+		expect(selectedLine(component)).toContain("x-omniroute-compression");
+		component.handleInput("\r");
+		component.handleInput("allow-lossy");
+		component.handleInput("\r");
+		component.handleInput("\x1b");
+		expect(done).toHaveBeenCalledWith({ ...baseSettings, compressionHeader: "allow-lossy" });
 	});
 });
 

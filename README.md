@@ -162,6 +162,7 @@ Default settings:
 | `onUnreachable` | `"none"` \| `"host-fallback"` | `none` | When `host-fallback`, probe the configured `serverUrl` before send and hop to `fallbackModel` if the gateway is down or times out. Configure it in `/omni config`. |
 | `fallbackModel` | string | empty | Authenticated host `provider/id` for the on-unreachable hop, for example `anthropic/claude-sonnet-4`. Empty means notify only. Configure it in `/omni config`. |
 | `defaultModel` | string | empty | Model id written to Pi's own `settings.json` as `defaultModel` (with `defaultProvider` set to `providerName`). Empty leaves Pi's startup model untouched. Configure it in `/omni config`. |
+| `compressionHeader` | string | empty | Value sent as OmniRoute's `x-omniroute-compression` request header for every inference request, for example `default`, `allow-lossy`, `engine:rtk`, or a compression-combo name. Empty keeps the OmniRoute server default. Configure it in `/omni config`. |
 | `apiKey` | string | empty | Bearer token sent to OmniRoute. Stored only in the protected extension settings file. |
 
 
@@ -272,6 +273,10 @@ A failure to fetch or parse `/api/pricing` falls back to zero-cost metadata; it 
 When an OmniRoute-backed agent turn settles, the extension displays the gateway-reported generation speed as `tok/s N.N`. It reads `X-OmniRoute-Tokens-Per-Second` and the final stream metadata or usage field, including streamed SSE responses. If OmniRoute does not provide a value, it displays `tok/s —`.
 
 The extension never derives tok/s from token counts and `X-OmniRoute-Latency-Ms`; latency includes time that is not generation. Telemetry is scoped to OmniRoute inference requests and is not shown for other providers. The display is disabled by default and can be enabled with **Show gateway tok/s** in `/omni config`.
+
+## Request Compression
+
+OmniRoute can compress prompts per request through its `x-omniroute-compression` header. Set **x-omniroute-compression** in `/omni config` to forward that header on every OmniRoute inference request. Accepted values are owned by OmniRoute (`off`, `default`, `safe`, `allow-lossy`, `engine:<id>`, or a combo name); unknown values are ignored by the gateway. Leave it empty to keep OmniRoute's server default and send no header. The global OmniRoute compression master switch still gates everything, so the header cannot enable compression when it is off server-side.
 
 ## Catalog Metadata
 

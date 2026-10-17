@@ -77,6 +77,11 @@ it("normalizes persisted auto-sync values at the settings boundary", () => {
 	expect(sanitizeSettings({ showGatewayTokensPerSecond: false }).showGatewayTokensPerSecond).toBe(false);
 });
 
+it("trims the configured compression header and defaults it to empty", () => {
+	expect(sanitizeSettings({ compressionHeader: "  allow-lossy  " }).compressionHeader).toBe("allow-lossy");
+	expect(sanitizeSettings({}).compressionHeader).toBe("");
+});
+
 describe("loadSettings", () => {
 	it("uses an extension-owned settings path", () => {
 		expect(settingsPath("/agent")).toBe("/agent/extensions/pi-omniroute-sync/settings.json");
@@ -98,6 +103,7 @@ describe("loadSettings", () => {
 			onUnreachable: "none",
 			fallbackModel: "",
 			defaultModel: "",
+			compressionHeader: "",
 			apiKey: "",
 		});
 	});
@@ -123,6 +129,7 @@ describe("loadSettings", () => {
 			onUnreachable: "none",
 			fallbackModel: "",
 			defaultModel: "",
+			compressionHeader: "",
 			apiKey: "",
 		});
 	});
@@ -152,6 +159,7 @@ describe("saveConfig", () => {
 			onUnreachable: "none",
 			fallbackModel: "",
 			defaultModel: "",
+			compressionHeader: "",
 			apiKey: "secret",
 		});
 		expect(statSync(dirname(path)).mode & 0o777).toBe(0o700);

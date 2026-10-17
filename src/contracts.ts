@@ -136,6 +136,7 @@ export interface ProviderEntry {
 	auth?: "apiKey" | "none" | "oauth";
 	authHeader: boolean;
 	compat: ProviderCompat;
+	headers?: Record<string, string>;
 	models: ProviderModelConfig[];
 }
 
