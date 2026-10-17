@@ -32,6 +32,28 @@ it("forwards the configured x-omniroute-compression header and omits it when uns
 	expect(registerProvider.mock.calls[0][1].headers).toEqual({});
 });
 
+it("keeps a compression header written by another session during sync", async () => {
+	fetchStub.mockImplementation(async (input) => {
+		const url = String(input);
+		const body = url.endsWith("/v1/models")
+			? { data: [{ id: "openai/gpt-5", name: "GPT-5" }] }
+			: { openai: { "gpt-5": { input: 1, output: 2 } } };
+		return new Response(JSON.stringify(body), { status: 200 });
+	});
+	const agentHome = mkdtempSync(join(tmpdir(), "pi-omni-keep-"));
+	saveSettings(agentHome, { ...loadSettings(agentHome), compressionHeader: "allow-lossy" });
+	const stale = { ...loadSettings(agentHome), compressionHeader: "" };
+
+	await registerOmniProvider(
+		{ registerProvider: vi.fn() } as never,
+		agentHome,
+		{ serverUrl: "http://localhost:20128", apiKey: "secret", providerName: "omni" },
+		stale as never,
+	);
+
+	expect(loadSettings(agentHome).compressionHeader).toBe("allow-lossy");
+});
+
 it("checks OmniRoute's lightweight health endpoint", async () => {
 	fetchStub.mockResolvedValue(new Response(null, { status: 200 }));
 

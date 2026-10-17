@@ -568,7 +568,8 @@ export async function registerOmniProvider(
 	const models = await discoverModels(config, settings, signal, agentHome);
 	pi.registerProvider(config.providerName, buildProviderEntry(config, models, settings.compressionHeader));
 	persistModels(agentHome, config, models);
-	saveSettings(agentHome, { ...settings, lastSuccessfulSyncAt: Date.now() });
+	// Re-read from disk so a sync only owns its timestamp and never clobbers settings another session changed.
+	saveSettings(agentHome, { ...loadSettings(agentHome), lastSuccessfulSyncAt: Date.now() });
 	return models;
 }
 
