@@ -566,6 +566,7 @@ export async function registerOmniProvider(
 	signal?: AbortSignal,
 ): Promise<ProviderModelConfig[]> {
 	const models = await discoverModels(config, settings, signal, agentHome);
+	if (signal?.aborted) return models;
 	pi.registerProvider(config.providerName, buildProviderEntry(config, models, settings.compressionHeader));
 	persistModels(agentHome, config, models);
 	// Re-read from disk so a sync only owns its timestamp and never clobbers settings another session changed.

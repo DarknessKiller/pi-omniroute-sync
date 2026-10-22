@@ -232,6 +232,7 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 	let healthTimer: ReturnType<typeof setInterval> | undefined;
 	let healthProbeAbortController: AbortController | undefined;
 	let autoSyncTimer: ReturnType<typeof setInterval> | undefined;
+	let sessionAbortController: AbortController | undefined;
 	let sessionCtx: OmniContext | undefined;
 	let syncInFlight: Promise<number> | null = null;
 	let lastSyncCount = 0;
@@ -277,9 +278,12 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 	async function sync(ctx?: OmniContext, options?: { quiet?: boolean }): Promise<number> {
 		if (syncInFlight) return syncInFlight;
 		const quiet = options?.quiet === true;
+		const sessionSignal = sessionAbortController?.signal;
+		const signal = ctx?.signal && sessionSignal ? AbortSignal.any([ctx.signal, sessionSignal]) : ctx?.signal ?? sessionSignal;
 		syncInFlight = (async () => {
 			config = loadConfig(agentHome);
-			const models = await registerOmniProvider(pi, agentHome, config, loadSettings(agentHome), ctx?.signal);
+			const models = await registerOmniProvider(pi, agentHome, config, loadSettings(agentHome), signal);
+			if (signal?.aborted) return models.length;
 			const previous = lastSyncCount;
 			lastSyncCount = models.length;
 			const notifyCtx = ctx ?? sessionCtx;
@@ -319,16 +323,22 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		sessionAbortController?.abort();
+		sessionAbortController = new AbortController();
 		sessionCtx = ctx;
 		config = loadConfig(agentHome);
 		const settings = loadSettings(agentHome);
 		if (settings.syncOnStartup && isConfigured(agentHome) && isSyncStale(settings)) {
 			try {
-				lastSyncCount = (await registerOmniProvider(pi, agentHome, config, settings, ctx.signal)).length;
+				const count = (await registerOmniProvider(pi, agentHome, config, settings, sessionAbortController.signal)).length;
+				if (sessionCtx !== ctx) return;
+				lastSyncCount = count;
 			} catch (error) {
+				if (sessionCtx !== ctx) return;
 				if (ctx.hasUI) ctx.ui.notify(`OmniRoute startup sync failed; using previous models: ${(error as Error).message}`, "warning");
 			}
 		}
+		if (sessionCtx !== ctx) return;
 		if (!isConfigured(agentHome) && !process.env.OMNIROUTE_URL) {
 			if (ctx.hasUI) {
 				ctx.ui.setStatus("omni", "OmniRoute unconfigured");
@@ -342,6 +352,7 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 		healthProbeAbortController?.abort();
 		healthProbeAbortController = new AbortController();
 		const result = await unreachable.probe(probeConfig, ctx.signal ?? healthProbeAbortController.signal);
+		if (sessionCtx !== ctx) return;
 		ctx.ui.setStatus("omni", healthStatus(result));
 		if (!result.ok) {
 			const message = result.unreachable
@@ -352,7 +363,7 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 		if (healthTimer) clearInterval(healthTimer);
 		healthTimer = setInterval(async () => {
 			const next = await unreachable.probe(loadProbeConfig(agentHome), healthProbeAbortController?.signal).catch(() => undefined);
-			if (next) ctx.ui.setStatus("omni", healthStatus(next));
+			if (next && sessionCtx === ctx) ctx.ui.setStatus("omni", healthStatus(next));
 		}, 60_000);
 	});
 
@@ -365,6 +376,8 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 		healthTimer = undefined;
 		healthProbeAbortController?.abort();
 		healthProbeAbortController = undefined;
+		sessionAbortController?.abort();
+		sessionAbortController = undefined;
 		stopAutoSync();
 		sessionCtx = undefined;
 		pendingRequestFailure = false;

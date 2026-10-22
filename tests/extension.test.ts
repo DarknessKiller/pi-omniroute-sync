@@ -163,6 +163,64 @@ describe("autosync lifecycle", () => {
 		expect(providerMocks.registerOmniProvider).toHaveBeenCalledOnce();
 	});
 
+	it("ignores a startup sync that finishes after session replacement", async () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-omni-extension-"));
+		saveSettings(home, { ...baseSettings, syncOnStartup: true });
+		providerMocks.isSyncStale.mockReturnValue(true);
+		let finishFirstSync!: (models: unknown[]) => void;
+		providerMocks.registerOmniProvider
+			.mockImplementationOnce(() => new Promise((resolve) => { finishFirstSync = resolve; }))
+			.mockResolvedValueOnce([{ id: "second" }])
+			.mockResolvedValueOnce([{ id: "second" }, { id: "timer" }]);
+		const pi = await createExtension(home);
+		const sessionStart = pi.events.get("session_start")!;
+		const sessionShutdown = pi.events.get("session_shutdown")!;
+		const firstUi = context();
+		const secondUi = context();
+
+		const firstSession = sessionStart({}, firstUi);
+		await vi.waitFor(() => expect(providerMocks.registerOmniProvider).toHaveBeenCalledTimes(1));
+		sessionShutdown();
+		await sessionStart({}, secondUi);
+		finishFirstSync([{ id: "first" }]);
+		await firstSession;
+
+		vi.advanceTimersByTime(60_000);
+		await vi.waitFor(() => expect(providerMocks.registerOmniProvider).toHaveBeenCalledTimes(3));
+		expect(secondUi.ui.notify).toHaveBeenCalledWith("OmniRoute auto-sync: catalog 1 → 2 model(s).", "info");
+		expect(firstUi.ui.notify).not.toHaveBeenCalled();
+		sessionShutdown();
+	});
+
+	it("discards an auto-sync that finishes after session replacement", async () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-omni-extension-"));
+		saveSettings(home, { ...baseSettings, syncOnStartup: true });
+		providerMocks.isSyncStale.mockReturnValue(true);
+		let finishAutoSync!: (models: unknown[]) => void;
+		providerMocks.registerOmniProvider
+			.mockResolvedValueOnce([{ id: "first" }])
+			.mockImplementationOnce(() => new Promise((resolve) => { finishAutoSync = resolve; }))
+			.mockResolvedValueOnce([{ id: "second" }]);
+		const pi = await createExtension(home);
+		const sessionStart = pi.events.get("session_start")!;
+		const sessionShutdown = pi.events.get("session_shutdown")!;
+		const firstUi = context();
+		const secondUi = context();
+
+		await sessionStart({}, firstUi);
+		vi.advanceTimersByTime(60_000);
+		await vi.waitFor(() => expect(providerMocks.registerOmniProvider).toHaveBeenCalledTimes(2));
+		sessionShutdown();
+		await sessionStart({}, secondUi);
+		finishAutoSync([{ id: "first" }, { id: "late" }]);
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(secondUi.ui.notify).not.toHaveBeenCalled();
+		expect(firstUi.ui.notify).not.toHaveBeenCalled();
+		sessionShutdown();
+	});
+
 	it("uses but does not save an environment-only key during setup", async () => {
 		const home = mkdtempSync(join(tmpdir(), "pi-omni-extension-"));
 		vi.stubEnv("OMNIROUTE_API_KEY", "environment-secret");
