@@ -17,7 +17,7 @@
 - Optional include and exclude model globs.
 - Optional global `auto` and `auto/*` routing models.
 - Real cost metadata from OmniRoute's pricing API, with zero-cost fallback when pricing is unavailable.
-- Background catalog autosync while a session is running, configurable from `/omni config` or `/omni autosync`.
+- Background catalog autosync while a session is running, configurable from `/omni config` or `/omni autosync`. Auto-sync errors only notify while originating session remains active.
 - Secure extension-owned settings; API keys are never copied to `models.json`.
 - Health status, model browsing, and direct model testing commands. Health checks use OmniRoute's lightweight `/api/health/ping` endpoint instead of downloading the full model catalog.
 

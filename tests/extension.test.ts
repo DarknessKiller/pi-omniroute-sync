@@ -220,6 +220,30 @@ describe("autosync lifecycle", () => {
 		expect(firstUi.ui.notify).not.toHaveBeenCalled();
 		sessionShutdown();
 	});
+	it("does not notify through an invalidated auto-sync context", async () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-omni-extension-"));
+		saveSettings(home, baseSettings);
+		let rejectSync!: (error: Error) => void;
+		providerMocks.registerOmniProvider.mockImplementationOnce(() => new Promise((_, reject) => { rejectSync = reject; }));
+		const pi = await createExtension(home);
+		const sessionStart = pi.events.get("session_start")!;
+		const sessionShutdown = pi.events.get("session_shutdown")!;
+		const controller = new AbortController();
+		const ui = context();
+		const ctx = { ...ui, signal: controller.signal };
+
+		await sessionStart({}, ctx);
+		vi.advanceTimersByTime(60_000);
+		await vi.waitFor(() => expect(providerMocks.registerOmniProvider).toHaveBeenCalledOnce());
+		controller.abort();
+		rejectSync(new Error("sync failed"));
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(ui.ui.notify).not.toHaveBeenCalled();
+		sessionShutdown();
+	});
 
 	it("uses but does not save an environment-only key during setup", async () => {
 		const home = mkdtempSync(join(tmpdir(), "pi-omni-extension-"));
