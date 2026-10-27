@@ -342,11 +342,16 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 	function startAutoSync(ctx: OmniContext): void {
 		stopAutoSync();
 		sessionCtx = ctx;
+		const contextSignal = ctx.signal;
 		const intervalSeconds = loadSettings(agentHome).autoSyncIntervalSeconds;
 		if (intervalSeconds === 0) return;
 		autoSyncTimer = setInterval(() => {
+			// Skip a tick whose ctx was already replaced; syncing against it is pointless.
+			if (sessionCtx !== ctx) return;
 			void sync(undefined, { quiet: true }).catch((error) => {
-				safeNotify(sessionCtx, `OmniRoute auto-sync failed: ${(error as Error).message}`, "warning");
+				if (!contextSignal?.aborted) {
+					safeNotify(sessionCtx, `OmniRoute auto-sync failed: ${(error as Error).message}`, "warning");
+				}
 			});
 		}, intervalSeconds * 1000);
 	}
