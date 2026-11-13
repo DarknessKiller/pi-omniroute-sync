@@ -283,8 +283,8 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 
 	/** UI calls from background timers can outlive their session context after a host reload. */
 	function safeNotify(ctx: OmniContext | undefined, message: string, kind: "info" | "warning" | "error"): void {
-		if (!ctx?.hasUI) return;
 		try {
+			if (!ctx?.hasUI) return;
 			ctx.ui.notify(message, kind);
 		} catch {
 			// Stale extension generation after reload; the notification is safe to drop.
@@ -292,8 +292,8 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 	}
 
 	function safeSetStatus(ctx: OmniContext | undefined, key: string, value: string | undefined): void {
-		if (!ctx?.hasUI) return;
 		try {
+			if (!ctx?.hasUI) return;
 			ctx.ui.setStatus(key, value);
 		} catch {
 			// Stale extension generation after reload; the status update is safe to drop.
@@ -323,6 +323,7 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 			const previous = lastSyncCount;
 			lastSyncCount = models.length;
 			const notifyCtx = ctx ?? sessionCtx;
+
 			if (!quiet) safeNotify(notifyCtx, `OmniRoute synced ${models.length} model(s).`, "info");
 			else if (previous > 0 && previous !== models.length) {
 				safeNotify(notifyCtx, `OmniRoute auto-sync: catalog ${previous} → ${models.length} model(s).`, "info");
@@ -346,6 +347,7 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 		const intervalSeconds = loadSettings(agentHome).autoSyncIntervalSeconds;
 		if (intervalSeconds === 0) return;
 		autoSyncTimer = setInterval(() => {
+
 			// Skip a tick whose ctx was already replaced; syncing against it is pointless.
 			if (sessionCtx !== ctx) return;
 			void sync(undefined, { quiet: true }).catch((error) => {
@@ -376,7 +378,7 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 				lastSyncCount = count;
 			} catch (error) {
 				if (sessionCtx !== ctx) return;
-				if (ctx.hasUI) ctx.ui.notify(`OmniRoute startup sync failed; using previous models: ${(error as Error).message}`, "warning");
+				safeNotify(ctx, `OmniRoute startup sync failed; using previous models: ${(error as Error).message}`, "warning");
 			}
 		}
 		if (sessionCtx !== ctx) return;
@@ -404,6 +406,7 @@ export async function createOmniExtension(pi: OmniPI, options: AgentHomeOptions)
 		if (healthTimer) clearInterval(healthTimer);
 		healthTimer = setInterval(async () => {
 			const next = await unreachable.probe(loadProbeConfig(agentHome), healthProbeAbortController?.signal).catch(() => undefined);
+
 			if (next && sessionCtx === ctx) safeSetStatus(ctx, "omni", healthStatus(next));
 		}, 60_000);
 	});
